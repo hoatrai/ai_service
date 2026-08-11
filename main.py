@@ -44,9 +44,9 @@ def health() -> dict:
 @app.post("/match")
 def match(req: MatchRequest, x_internal_key: str | None = Header(default=None)) -> dict:
     _check_internal_key(x_internal_key)
-    logger.info(f"[/match] user_id={req.user_id} lat={req.lat} lng={req.lng}")
+    logger.info(f"[/match] user_id={req.user_id} lat={req.lat} lng={req.lng} district={req.district}")
     try:
-        result = crew.run_match(req.user_id, req.lat, req.lng, req.radius_km)
+        result = crew.run_match(req.user_id, req.lat, req.lng, req.radius_km, req.district, req.activity_type)
     except Exception as exc:  # noqa: BLE001
         logger.exception("[/match] lỗi khi chạy Match Agent")
         raise HTTPException(status_code=500, detail=str(exc)) from exc

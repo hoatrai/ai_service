@@ -38,12 +38,22 @@ def _parse_json_output(raw: str) -> dict | list:
         return {"raw": raw}
 
 
-def run_match(user_id: int, lat: float, lng: float, radius_km: float = 3.0) -> dict | list:
+def run_match(
+    user_id: int,
+    lat: float,
+    lng: float,
+    radius_km: float = 3.0,
+    district: str = "",
+    activity_type: str = "",
+) -> dict | list:
     agent = build_match_agent()
     task = Task(
         description=(
-            f"User_id={user_id} đang ở toạ độ lat={lat}, lng={lng}. "
-            f"Tìm user/kèo phù hợp trong bán kính {radius_km}km bằng tool được cấp. "
+            f"User_id={user_id} đang ở toạ độ lat={lat}, lng={lng}, quận/huyện='{district}'. "
+            f"BẮT BUỘC gọi tool 'Tìm user đang bật radar gần một toạ độ' với đúng "
+            f"district='{district}'" + (f", activity_type='{activity_type}'" if activity_type else "")
+            + f" (không truyền district thì tool luôn trả rỗng). Sau đó lọc trong bán kính "
+            f"{radius_km}km bằng lat/lng của từng ứng viên (đã có sẵn trong kết quả tool). "
             "Chấm điểm % phù hợp cho từng ứng viên dựa trên khoảng cách, khung giờ, "
             "loại hoạt động và lịch sử tham gia (gọi tool lấy lịch sử nếu cần)."
         ),

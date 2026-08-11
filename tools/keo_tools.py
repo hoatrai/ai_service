@@ -12,11 +12,17 @@ from tools import wp_api_client as wp
 
 
 @tool("Tìm user đang bật radar gần một toạ độ")
-def find_nearby_users(lat: float, lng: float, radius_km: float = 3.0) -> str:
+def find_nearby_users(lat: float, lng: float, radius_km: float = 3.0, district: str = "", activity_type: str = "") -> str:
     """Trả về JSON danh sách user đang online/bật finding-keo trong bán kính radius_km
     quanh (lat, lng). Dùng khi cần tìm người để ghép vào 1 kèo.
+
+    🔧 BẮT BUỘC truyền `district` (quận/huyện, vd "Bình Thạnh") — route WordPress
+    phía sau lọc theo district trước, radius_km chỉ lọc TIẾP trong kết quả đó.
+    Thiếu district sẽ luôn trả về danh sách rỗng.
+    `activity_type` (optional) lọc thêm theo loại hoạt động đang tìm (vd "nhậu bia",
+    "cafe") nếu cần khớp đúng sở thích/loại kèo, để trống nếu muốn thấy mọi loại.
     """
-    users = wp.safe_call(wp.get_nearby_users, lat, lng, radius_km, default=[])
+    users = wp.safe_call(wp.get_nearby_users, lat, lng, radius_km, district, activity_type, default=[])
     return json.dumps(users, ensure_ascii=False)
 
 

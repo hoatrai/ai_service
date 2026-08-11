@@ -12,6 +12,8 @@ Các route tham chiếu (đọc trực tiếp từ code plugin lúc viết file 
 """
 from __future__ import annotations
 
+import math
+
 import httpx
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -30,21 +32,73 @@ def _client(jwt: str | None = None) -> httpx.Client:
     return httpx.Client(base_url=settings.wordpress_base_url, headers=headers, timeout=_TIMEOUT)
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Khoảng cách thẳng giữa 2 toạ độ (km) — dùng để lọc thêm theo radius_km
+    ở phía Python, vì endpoint finding-keo/nearby chỉ lọc theo district (không
+    hỗ trợ bán kính), nhưng mỗi row trong bảng wp_finding_keo có sẵn lat/lng
+    (xem finding_keo_on() trong finding-keo.php) nên vẫn lọc lại được.
+    """
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=4))
-def get_nearby_users(lat: float, lng: float, radius_km: float = 3.0) -> list[dict]:
+def get_nearby_users(
+    lat: float,
+    lng: float,
+    radius_km: float = 3.0,
+    district: str = "",
+    activity_type: str = "",
+) -> list[dict]:
     """Gọi custom/v1/finding-keo/nearby — danh sách user đang bật radar quanh 1 toạ độ.
 
-    Lưu ý: route hiện tại trong finding-keo.php lọc theo district/hoạt động, KHÔNG
-    tự tính khoảng cách km hay điểm phù hợp — việc đó là phần AI Service này thêm vào.
+    🔧 FIX: route thật (finding_keo_nearby() trong finding-keo.php) lọc theo
+    `district` (BẮT BUỘC — thiếu thì trả success:false luôn) và `activity_type`
+    (optional), KHÔNG nhận lat/lng/radius_km — trước đây hàm này gửi nhầm
+    lat/lng/radius_km lên route, route luôn trả "Missing district" -> luôn
+    ra danh sách rỗng dù có user thật đang bật radar gần đó.
+    Giờ gửi đúng `district`, rồi TỰ lọc lại theo `radius_km` ở phía Python
+    bằng khoảng cách haversine tính từ lat/lng có sẵn trong mỗi row trả về
+    (mỗi row của bảng wp_finding_keo có lat/lng riêng, xem finding_keo_on()).
     """
+    if not district:
+        logger.warning("[wp_api_client] get_nearby_users thiếu district -> route sẽ trả rỗng, bỏ qua gọi")
+        return []
+
     with _client() as client:
-        resp = client.get(
-            "/wp-json/custom/v1/finding-keo/nearby",
-            params={"lat": lat, "lng": lng, "radius_km": radius_km},
-        )
+        params: dict[str, str] = {"district": district}
+        if activity_type:
+            params["activity_type"] = activity_type
+        resp = client.get("/wp-json/custom/v1/finding-keo/nearby", params=params)
         resp.raise_for_status()
         data = resp.json()
-        return data.get("users", data if isinstance(data, list) else [])
+        if not data.get("success", True):
+            logger.warning(f"[wp_api_client] finding-keo/nearby trả lỗi: {data.get('message')}")
+            return []
+        users = data.get("data", data if isinstance(data, list) else [])
+
+    # Lọc lại theo bán kính thật (route chỉ lọc theo quận, quận có thể rộng
+    # hơn radius_km nhiều) — bỏ qua row nào thiếu lat/lng thay vì loại hết.
+    filtered = []
+    for u in users:
+        u_lat, u_lng = u.get("lat"), u.get("lng")
+        if u_lat in (None, "", 0) or u_lng in (None, "", 0):
+            filtered.append(u)  # thiếu toạ độ -> không lọc được, giữ lại thay vì mất user
+            continue
+        try:
+            dist = _haversine_km(lat, lng, float(u_lat), float(u_lng))
+        except (TypeError, ValueError):
+            filtered.append(u)
+            continue
+        if dist <= radius_km:
+            u["distance_km"] = round(dist, 2)
+            filtered.append(u)
+
+    return filtered
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=4))
