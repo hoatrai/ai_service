@@ -6,6 +6,7 @@ chạy kickoff() và ép output về JSON để trả cho Phoenix/WordPress.
 from __future__ import annotations
 
 import json
+import re
 
 from crewai import Crew, Process, Task
 from loguru import logger
@@ -16,12 +17,20 @@ from agents.recommendation_agent import build_recommendation_agent
 
 
 def _parse_json_output(raw: str) -> dict | list:
-    """LLM đôi khi bọc JSON trong ```json ... ``` — bóc ra trước khi parse."""
+    """LLM đôi khi bọc JSON trong ```json ... ``` — bóc ra trước khi parse.
+
+    🆕 FIX: trước đây chỉ bóc fence khi nó nằm Ở ĐẦU chuỗi
+    (text.startswith("```")). Thực tế LLM nhiều lúc chỉ dính dư fence ở
+    CUỐI (vd '{"matches": []}\n```' — JSON hợp lệ nhưng có "```" thừa ở
+    cuối) -> startswith("```") = False -> không bóc -> json.loads() lỗi ->
+    rơi về {"raw": raw} thay vì JSON thật (gặp đúng case này ở /match).
+    Giờ bóc fence ở CẢ 2 đầu bằng regex, không phụ thuộc chuỗi bắt đầu
+    bằng gì.
+    """
     text = raw.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = text.strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
