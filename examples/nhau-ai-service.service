@@ -1,0 +1,16 @@
+[Unit]
+Description=Nhau AI Service (FastAPI + CrewAI)
+After=network.target
+
+[Service]
+Type=simple
+# Khớp với thư mục clone từ github.com/hoatrai/ai_service
+WorkingDirectory=/opt/ai_service
+EnvironmentFile=/opt/ai_service/.env
+ExecStart=/opt/ai_service/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8088 --workers 2
+Restart=on-failure
+RestartSec=5
+User=www-data
+
+[Install]
+WantedBy=multi-user.target

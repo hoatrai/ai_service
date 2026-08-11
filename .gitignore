@@ -1,0 +1,22 @@
+# Secrets — KHÔNG BAO GIỜ commit .env thật (chứa OPENAI_API_KEY, AI_SERVICE_INTERNAL_KEY...)
+.env
+*.env
+!.env.example
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
