@@ -56,21 +56,23 @@ def get_nearby_users(
 ) -> list[dict]:
     """Gọi custom/v1/finding-keo/nearby — danh sách user đang bật radar quanh 1 toạ độ.
 
-    🔧 FIX: route thật (finding_keo_nearby() trong finding-keo.php) lọc theo
-    `district` (BẮT BUỘC — thiếu thì trả success:false luôn) và `activity_type`
-    (optional), KHÔNG nhận lat/lng/radius_km — trước đây hàm này gửi nhầm
-    lat/lng/radius_km lên route, route luôn trả "Missing district" -> luôn
-    ra danh sách rỗng dù có user thật đang bật radar gần đó.
-    Giờ gửi đúng `district`, rồi TỰ lọc lại theo `radius_km` ở phía Python
-    bằng khoảng cách haversine tính từ lat/lng có sẵn trong mỗi row trả về
-    (mỗi row của bảng wp_finding_keo có lat/lng riêng, xem finding_keo_on()).
+    🔧 FIX (12/08): route thật (finding_keo_nearby() trong finding-keo.php) ĐÃ đổi
+    sang lọc bằng Haversine trên lat/lng — `district` giờ CHỈ để hiển thị, KHÔNG
+    còn bắt buộc, và route nhận thẳng `lat`/`lng`/`radius_km`/`activity_type` làm
+    query param (tự lọc + tự tính distance_km phía SQL, không cần Python lọc lại).
+    Bản cũ của hàm này (guard `if not district: return []` + chỉ gửi `district`,
+    không gửi lat/lng) được viết TRƯỚC khi finding-keo.php đổi sang Haversine —
+    kể từ khi Flutter bỏ hẳn bước reverse-geocode district (xem flutter_map.dart,
+    _loadAiMatches gọi thẳng lat/lng, district luôn rỗng ''), guard đó khiến
+    hàm LUÔN return [] ngay từ đầu -> Match Agent luôn ra matches:[] -> chip
+    "gợi ý ghép kèo" trên map biến mất hoàn toàn, dù có user thật đang bật radar
+    rất gần. Giờ gửi thẳng lat/lng/radius_km lên route (đúng hợp đồng mới),
+    `district` chỉ forward nếu có, không còn là điều kiện chặn gọi API.
     """
-    if not district:
-        logger.warning("[wp_api_client] get_nearby_users thiếu district -> route sẽ trả rỗng, bỏ qua gọi")
-        return []
-
     with _client() as client:
-        params: dict[str, str] = {"district": district}
+        params: dict[str, float | str] = {"lat": lat, "lng": lng, "radius_km": radius_km}
+        if district:
+            params["district"] = district
         if activity_type:
             params["activity_type"] = activity_type
         resp = client.get("/wp-json/custom/v1/finding-keo/nearby", params=params)
@@ -81,24 +83,19 @@ def get_nearby_users(
             return []
         users = data.get("data", data if isinstance(data, list) else [])
 
-    # Lọc lại theo bán kính thật (route chỉ lọc theo quận, quận có thể rộng
-    # hơn radius_km nhiều) — bỏ qua row nào thiếu lat/lng thay vì loại hết.
-    filtered = []
+    # Route đã lọc + trả sẵn distance_km theo đúng radius_km (Haversine trong SQL),
+    # không cần lọc lại ở Python nữa — giữ lại haversine dự phòng chỉ cho row nào
+    # thiếu distance_km (client cũ/route fallback theo district).
     for u in users:
-        u_lat, u_lng = u.get("lat"), u.get("lng")
-        if u_lat in (None, "", 0) or u_lng in (None, "", 0):
-            filtered.append(u)  # thiếu toạ độ -> không lọc được, giữ lại thay vì mất user
-            continue
-        try:
-            dist = _haversine_km(lat, lng, float(u_lat), float(u_lng))
-        except (TypeError, ValueError):
-            filtered.append(u)
-            continue
-        if dist <= radius_km:
-            u["distance_km"] = round(dist, 2)
-            filtered.append(u)
+        if u.get("distance_km") is None:
+            u_lat, u_lng = u.get("lat"), u.get("lng")
+            if u_lat not in (None, "", 0) and u_lng not in (None, "", 0):
+                try:
+                    u["distance_km"] = round(_haversine_km(lat, lng, float(u_lat), float(u_lng)), 2)
+                except (TypeError, ValueError):
+                    pass
 
-    return filtered
+    return users
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=4))
