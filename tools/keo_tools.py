@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 
 from crewai.tools import tool
+from crewai.tools.base_tool import Tool
+from pydantic import BaseModel, Field
 
 from tools import wp_api_client as wp
 
@@ -30,6 +32,10 @@ def find_nearby_users(lat: float, lng: float, radius_km: float = 3.0, district: 
     LLM (gpt-4o-mini) hay quên truyền các tham số phụ (structured tool-calling bị
     giới hạn bởi args_schema, không phải tự do). Xem crew.py run_match để biết
     chỗ gọi factory.
+
+    ⚠️ Hàm này KHÔNG được gắn cho Agent nào (xem comment trên) nên bug "default bị
+    mất khi @tool tự sinh args_schema" (xem chi tiết ở list_open_invites bên dưới)
+    không có ảnh hưởng thực tế ở đây — giữ nguyên @tool decorator cho gọn.
     """
     users = wp.safe_call(wp.get_nearby_users, lat, lng, radius_km, district, activity_type, default=[])
     return json.dumps(users, ensure_ascii=False)
@@ -61,14 +67,24 @@ def make_find_nearby_users_tool(district: str, activity_type: str = "", exclude_
 
     Dùng trong build_match_agent(district=..., exclude_user_id=user_id) thay vì
     tool module-level phía trên.
+
+    🔧 FIX (12/08): @tool(...) của crewai==0.100.1 tự sinh args_schema từ
+    __annotations__ của hàm, KHÔNG copy default value trong signature -> dù code
+    Python để `radius_km: float = 3.0`, Pydantic vẫn coi radius_km là required ->
+    nếu LLM gọi tool mà quên truyền radius_km sẽ bị lỗi "Field required" giống
+    hệt bug đã gặp ở list_open_invites (xem comment ở đó). Dựng Tool() tường
+    minh kèm args_schema có Field(default=...) để giữ đúng default cho LLM.
     """
 
-    @tool("Tìm user đang bật radar gần một toạ độ")
-    def find_nearby_users_bound(lat: float, lng: float, radius_km: float = 3.0) -> str:
-        """Trả về JSON danh sách user đang online/bật finding-keo trong bán kính
-        radius_km quanh (lat, lng), đã tự động lọc theo đúng quận/huyện của user
-        hiện tại và tự động loại chính user đang tìm kiếm ra khỏi kết quả. Dùng
-        khi cần tìm người để ghép vào 1 kèo."""
+    class _FindNearbyUsersBoundInput(BaseModel):
+        lat: float = Field(description="Vĩ độ (latitude) toạ độ trung tâm cần tìm quanh.")
+        lng: float = Field(description="Kinh độ (longitude) toạ độ trung tâm cần tìm quanh.")
+        radius_km: float = Field(
+            default=3.0,
+            description="Bán kính tìm kiếm (km). KHÔNG bắt buộc, để trống dùng mặc định 3.0.",
+        )
+
+    def _find_nearby_users_bound(lat: float, lng: float, radius_km: float = 3.0) -> str:
         users = wp.safe_call(
             wp.get_nearby_users, lat, lng, radius_km, district, activity_type, default=[]
         )
@@ -76,22 +92,55 @@ def make_find_nearby_users_tool(district: str, activity_type: str = "", exclude_
             users = [u for u in users if str(u.get("user_id")) != str(exclude_user_id)]
         return json.dumps(users, ensure_ascii=False)
 
-    return find_nearby_users_bound
+    return Tool(
+        name="Tìm user đang bật radar gần một toạ độ",
+        description=(
+            "Trả về JSON danh sách user đang online/bật finding-keo trong bán kính "
+            "radius_km quanh (lat, lng), đã tự động lọc theo đúng quận/huyện của user "
+            "hiện tại và tự động loại chính user đang tìm kiếm ra khỏi kết quả. Dùng "
+            "khi cần tìm người để ghép vào 1 kèo. `radius_km` không bắt buộc (mặc định 3.0)."
+        ),
+        func=_find_nearby_users_bound,
+        args_schema=_FindNearbyUsersBoundInput,
+    )
 
 
-@tool("Lấy danh sách kèo đang mở")
-def list_open_invites(district: str = "") -> str:
-    """Trả về JSON danh sách kèo (invite) đang ở trạng thái open (nguồn: shop-feed,
-    đã sort sẵn theo độ hot/sắp diễn ra).
+class _ListOpenInvitesInput(BaseModel):
+    # 🔧 FIX (12/08): @tool(...) decorator của crewai==0.100.1 tự sinh args_schema
+    # bằng cách chỉ copy __annotations__ (type hint) của hàm, KHÔNG copy default
+    # value trong signature -> dù code Python để `district: str = ""` (không bắt
+    # buộc), Pydantic vẫn coi district là required field -> LLM gọi tool không
+    # kèm district (đúng ý, vì description đã nói KHÔNG bắt buộc) thì bị lỗi
+    # validation "Field required" -> agent phải retry, có nguy cơ không lấy được
+    # danh sách kèo mở. Khai args_schema tay ở đây (dựng Tool() trực tiếp thay vì
+    # dùng decorator) để giữ đúng default="" cho LLM.
+    district: str = Field(
+        default="",
+        description=(
+            "KHÔNG bắt buộc — để trống nếu không cần lọc theo khu vực. Endpoint "
+            "gốc chỉ lọc theo lat/lng/radius_km, không nhận tên quận/huyện dạng chuỗi."
+        ),
+    )
 
-    ⚠️ `district` KHÔNG lọc cứng được ở đây — endpoint gốc (nhau/v1/shop-feed)
-    chỉ hỗ trợ lọc theo lat/lng/radius_km, không nhận tên quận/huyện dạng chuỗi
-    (khác với 'Tìm user đang bật radar...'). Nếu cần ưu tiên đúng khu vực, tự đọc
-    field 'address' của từng kèo trong kết quả trả về thay vì trông chờ tool này
-    tự lọc theo `district` truyền vào.
-    """
+
+def _list_open_invites(district: str = "") -> str:
     invites = wp.safe_call(wp.get_open_invites, district or None, default=[])
     return json.dumps(invites, ensure_ascii=False)
+
+
+list_open_invites = Tool(
+    name="Lấy danh sách kèo đang mở",
+    description=(
+        "Trả về JSON danh sách kèo (invite) đang ở trạng thái open (nguồn: shop-feed, "
+        "đã sort sẵn theo độ hot/sắp diễn ra). `district` không bắt buộc — endpoint "
+        "gốc (nhau/v1/shop-feed) chỉ hỗ trợ lọc theo lat/lng/radius_km, không nhận tên "
+        "quận/huyện dạng chuỗi (khác với 'Tìm user đang bật radar...'). Nếu cần ưu tiên "
+        "đúng khu vực, tự đọc field 'address' của từng kèo trong kết quả trả về thay vì "
+        "trông chờ tool này tự lọc theo `district` truyền vào."
+    ),
+    func=_list_open_invites,
+    args_schema=_ListOpenInvitesInput,
+)
 
 
 @tool("Lấy chi tiết 1 kèo")
