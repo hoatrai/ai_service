@@ -135,18 +135,31 @@ def get_open_invites(district: str | None = None, per_page: int = 30) -> list[di
     # khu vực (thay cho lọc district cứng mà shop-feed không hỗ trợ).
     normalized = []
     for it in items:
+        # 🔧 FIX (12/08): shop-feed.php trả pub_name/address/time/slots/lat/lng
+        # LỒNG trong item['meta'] (xem 'meta' => [...] trong nhau_shop_feed()),
+        # và joined_count lồng trong item['invite']['joined_count'] (không phải
+        # item['joined']) — bản cũ đọc thẳng it.get(...) ở top-level nên luôn
+        # miss, rơi về default rỗng/0/None cho MỌI kèo, dù DB có đủ dữ liệu.
+        # Hệ quả: Recommendation Agent nhận toàn field rỗng -> LLM phải tự bịa
+        # lý do gợi ý (không dựa trên dữ liệu thật) thay vì đọc pub_name/address/
+        # time thật để xếp hạng đúng.
+        meta = it.get("meta") or {}
         invite = it.get("invite") or {}
         normalized.append({
             "invite_id": invite.get("invite_id"),
             "product_id": it.get("id"),
-            "pub_name": it.get("pub_name", ""),
-            "address": it.get("address", ""),
-            "time": it.get("time", ""),
-            "slots": it.get("slots", 0),
-            "joined_count": it.get("joined", 0),
+            "pub_name": meta.get("pub_name", ""),
+            "address": meta.get("address", ""),
+            "time": meta.get("time", ""),
+            "slots": meta.get("slots", 0),
+            "joined_count": invite.get("joined_count", 0),
+            # 🔎 'priority' KHÔNG có trong response cuối của shop-feed.php (chỉ
+            # dùng nội bộ để WordPress tự sort trước khi trả JSON) -> luôn None,
+            # không phải bug, giữ lại field cho tương thích ngược nếu WP sau này
+            # có expose thêm.
             "priority": it.get("priority"),
-            "lat": it.get("lat"),
-            "lng": it.get("lng"),
+            "lat": meta.get("lat"),
+            "lng": meta.get("lng"),
         })
     return normalized
 
