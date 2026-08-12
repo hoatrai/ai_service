@@ -16,19 +16,20 @@ def find_nearby_users(lat: float, lng: float, radius_km: float = 3.0, district: 
     """Trả về JSON danh sách user đang online/bật finding-keo trong bán kính radius_km
     quanh (lat, lng). Dùng khi cần tìm người để ghép vào 1 kèo.
 
-    🔧 BẮT BUỘC truyền `district` (quận/huyện, vd "Bình Thạnh") — route WordPress
-    phía sau lọc theo district trước, radius_km chỉ lọc TIẾP trong kết quả đó.
-    Thiếu district sẽ luôn trả về danh sách rỗng.
+    🔧 FIX: `district` KHÔNG còn bắt buộc — route WordPress phía sau
+    (finding-keo/nearby) giờ lọc bằng khoảng cách thật (Haversine trên lat/lng),
+    không còn so khớp chuỗi district nữa (trước đây 2 user đứng gần nhau vẫn có
+    thể bị reverse-geocode ra 2 chuỗi district khác nhau -> exact match luôn
+    rỗng dù có user thật rất gần). Chỉ cần lat/lng + radius_km là đủ.
     `activity_type` (optional) lọc thêm theo loại hoạt động đang tìm (vd "nhậu bia",
     "cafe") nếu cần khớp đúng sở thích/loại kèo, để trống nếu muốn thấy mọi loại.
 
     ⚠️ Giữ lại hàm này (module-level, đủ 5 tham số) để backward-compat cho nơi nào
     còn import trực tiếp. Nhưng KHÔNG gắn hàm này cho match_agent nữa — dùng
     `make_find_nearby_users_tool(district, activity_type)` bên dưới thay thế, vì
-    LLM (gpt-4o-mini) hay quên truyền `district` dù docstring có ghi "BẮT BUỘC"
-    (structured tool-calling bị giới hạn bởi args_schema, không phải tự do —
-    LLM chỉ tuân theo những gì nó THẤY trong schema, không phải những gì đọc
-    trong prompt). Xem crew.py run_match để biết chỗ gọi factory.
+    LLM (gpt-4o-mini) hay quên truyền các tham số phụ (structured tool-calling bị
+    giới hạn bởi args_schema, không phải tự do). Xem crew.py run_match để biết
+    chỗ gọi factory.
     """
     users = wp.safe_call(wp.get_nearby_users, lat, lng, radius_km, district, activity_type, default=[])
     return json.dumps(users, ensure_ascii=False)
@@ -41,8 +42,15 @@ def make_find_nearby_users_tool(district: str, activity_type: str = "", exclude_
 
     Khác với `find_nearby_users` ở trên: tool trả về từ factory này CHỈ có
     `lat`, `lng`, `radius_km` trong args_schema — LLM không hề nhìn thấy (và do đó
-    không thể quên truyền) `district`/`activity_type`. Đây là fix triệt để cho bug
-    "district thiếu -> WordPress route finding-keo/nearby luôn trả rỗng".
+    không thể quên truyền) `district`/`activity_type`.
+
+    🔧 FIX (lọc theo khoảng cách thay vì district): trước đây route WordPress
+    phía sau (finding-keo/nearby) lọc BẮT BUỘC bằng `fk.district = %s` (so khớp
+    chuỗi) — 2 user đứng gần nhau vẫn ra 2 chuỗi district khác nhau tuỳ máy
+    (lệch ranh giới quận, khác fallback locality/subAdministrativeArea) nên
+    match luôn rỗng dù có người thật gần đó. Route giờ đã đổi sang Haversine
+    trên lat/lng (giống spiritwebs/v1/nearby-deals), `district` chỉ còn dùng để
+    hiển thị UI, không còn quyết định có match được hay không.
 
     🆕 `exclude_user_id`: loại chính user đang gọi /match ra khỏi kết quả trước khi
     trả về LLM. Phát hiện qua test thật với 2 user online: user tự bật radar ở

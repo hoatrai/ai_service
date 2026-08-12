@@ -6,9 +6,11 @@ class MatchRequest(BaseModel):
     lat: float
     lng: float
     radius_km: float = 3.0
-    # 🆕 BẮT BUỘC để find_nearby_users hoạt động — route WordPress phía sau
-    # (finding-keo/nearby) lọc theo quận/huyện trước, không nhận lat/lng
-    # trực tiếp. Thiếu field này, Agent gọi tool sẽ luôn ra danh sách rỗng.
+    # 🔧 FIX: KHÔNG còn bắt buộc — finding-keo/nearby giờ lọc bằng Haversine
+    # thật trên lat/lng (xem finding-keo.php::finding_keo_nearby). district
+    # cũ dùng để lọc exact-match string, dễ lệch giữa 2 user đứng gần nhau
+    # do khác kết quả reverse-geocode -> match luôn rỗng dù có user gần đó.
+    # Giữ field lại (optional) chỉ để hiển thị UI / client cũ chưa update.
     district: str = ""
     activity_type: str = ""
 
