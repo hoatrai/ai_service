@@ -73,7 +73,15 @@ def make_find_nearby_users_tool(district: str, activity_type: str = "", exclude_
 
 @tool("Lấy danh sách kèo đang mở")
 def list_open_invites(district: str = "") -> str:
-    """Trả về JSON danh sách kèo (invite) đang ở trạng thái open, có thể lọc theo quận."""
+    """Trả về JSON danh sách kèo (invite) đang ở trạng thái open (nguồn: shop-feed,
+    đã sort sẵn theo độ hot/sắp diễn ra).
+
+    ⚠️ `district` KHÔNG lọc cứng được ở đây — endpoint gốc (nhau/v1/shop-feed)
+    chỉ hỗ trợ lọc theo lat/lng/radius_km, không nhận tên quận/huyện dạng chuỗi
+    (khác với 'Tìm user đang bật radar...'). Nếu cần ưu tiên đúng khu vực, tự đọc
+    field 'address' của từng kèo trong kết quả trả về thay vì trông chờ tool này
+    tự lọc theo `district` truyền vào.
+    """
     invites = wp.safe_call(wp.get_open_invites, district or None, default=[])
     return json.dumps(invites, ensure_ascii=False)
 

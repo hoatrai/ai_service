@@ -102,18 +102,56 @@ def get_nearby_users(
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=4))
-def get_open_invites(district: str | None = None) -> list[dict]:
-    """Lấy danh sách kèo đang mở. Dùng nhau/v1/my-keo hoặc /wc/v3/products tuỳ triển khai
-    thực tế — ở đây gọi endpoint chung, anh chỉnh lại cho khớp response thật của site.
+def get_open_invites(district: str | None = None, per_page: int = 30) -> list[dict]:
+    """Lấy danh sách kèo đang mở qua nhau/v1/shop-feed (route CÔNG KHAI, không cần
+    JWT/consumer key — cùng nguồn dữ liệu shop_page.dart đang dùng thật).
+
+    🔧 FIX: TRƯỚC ĐÂY gọi nhau/v1/my-keo — SAI 2 lớp:
+      1. my-keo.php tự đọc get_current_user_id() và trả 401 'not_logged_in'
+         nếu không có JWT. _client() ở file này không hề gắn Authorization
+         header (tham số jwt không được truyền ở bất kỳ chỗ gọi nào) -> mọi
+         request đều 401 -> safe_call() nuốt lỗi -> luôn trả [] -> Recommendation
+         Agent không có kèo nào để xếp hạng -> /invite/recommend luôn rỗng.
+      2. Kể cả có JWT, my-keo CHỈ trả kèo của ĐÚNG 1 user đang đăng nhập
+         (host hoặc đã join) — không phải danh sách "tất cả kèo đang mở"
+         cần để so sánh/xếp hạng giữa nhiều lựa chọn.
+
+    shop-feed không lọc theo `district` dạng chuỗi (chỉ có lat/lng/radius_km),
+    nên KHÔNG lọc cứng ở đây — trả full list (đã sort theo priority/live/sắp
+    diễn ra) kèm field 'address' để Agent tự đọc và ưu tiên đúng khu vực nếu
+    task có nhắc district, tương tự cách LLM tự suy luận reason. Tránh lặp
+    lại bug "LLM quên truyền district" từng gặp ở find_nearby_users bằng
+    cách không bắt buộc LLM tự lọc số liệu, chỉ cần đọc text.
     """
     with _client() as client:
-        params = {"status": "open"}
-        if district:
-            params["district"] = district
-        resp = client.get("/wp-json/nhau/v1/my-keo", params=params)
+        params = {"page": 1, "per_page": min(per_page, 30)}
+        resp = client.get("/wp-json/nhau/v1/shop-feed", params=params)
         resp.raise_for_status()
         data = resp.json()
-        return data.get("invites", data if isinstance(data, list) else [])
+        if not data.get("success", True):
+            logger.warning(f"[wp_api_client] shop-feed trả lỗi: {data.get('message')}")
+            return []
+        items = data.get("data", [])
+
+    # Chuẩn hoá field cho gọn — Agent chỉ cần vừa đủ để xếp hạng + gọi tiếp
+    # get_invite_detail(invite_id). Giữ 'address' nguyên văn để LLM tự đọc
+    # khu vực (thay cho lọc district cứng mà shop-feed không hỗ trợ).
+    normalized = []
+    for it in items:
+        invite = it.get("invite") or {}
+        normalized.append({
+            "invite_id": invite.get("invite_id"),
+            "product_id": it.get("id"),
+            "pub_name": it.get("pub_name", ""),
+            "address": it.get("address", ""),
+            "time": it.get("time", ""),
+            "slots": it.get("slots", 0),
+            "joined_count": it.get("joined", 0),
+            "priority": it.get("priority"),
+            "lat": it.get("lat"),
+            "lng": it.get("lng"),
+        })
+    return normalized
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=4))
