@@ -49,7 +49,7 @@ def run_match(
     # district/activity_type được khoá cứng vào tool "Tìm user đang bật radar..."
     # ngay tại đây (closure trong make_find_nearby_users_tool), agent không còn
     # tham số district để tự truyền/tự quên nữa -> khỏi cần nhắc trong Task nữa.
-    agent = build_match_agent(district=district, activity_type=activity_type)
+    agent = build_match_agent(district=district, user_id=user_id, activity_type=activity_type)
     task = Task(
         description=(
             f"User_id={user_id} đang ở toạ độ lat={lat}, lng={lng}, quận/huyện='{district}'. "

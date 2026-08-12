@@ -34,7 +34,7 @@ def find_nearby_users(lat: float, lng: float, radius_km: float = 3.0, district: 
     return json.dumps(users, ensure_ascii=False)
 
 
-def make_find_nearby_users_tool(district: str, activity_type: str = ""):
+def make_find_nearby_users_tool(district: str, activity_type: str = "", exclude_user_id: int | None = None):
     """Factory tạo tool 'Tìm user đang bật radar gần một toạ độ' cho MỘT request cụ
     thể, khoá cứng `district`/`activity_type` bằng closure ngay tại thời điểm build
     agent (biết trước từ context của request, không cần LLM tự suy ra).
@@ -44,17 +44,28 @@ def make_find_nearby_users_tool(district: str, activity_type: str = ""):
     không thể quên truyền) `district`/`activity_type`. Đây là fix triệt để cho bug
     "district thiếu -> WordPress route finding-keo/nearby luôn trả rỗng".
 
-    Dùng trong build_match_agent(district=...) thay vì tool module-level phía trên.
+    🆕 `exclude_user_id`: loại chính user đang gọi /match ra khỏi kết quả trước khi
+    trả về LLM. Phát hiện qua test thật với 2 user online: user tự bật radar ở
+    đúng toạ độ mình đứng -> distance_km=0.0 -> lọt qua bộ lọc bán kính -> Agent
+    match user với chính họ, score 100% ("Cùng tổ chức kèo"). Lọc ở code, không
+    dựa vào Task description nhắc Agent "đừng tự match với chính mình" — cùng lý
+    do với fix district: LLM hay bỏ sót instruction dạng phủ định/edge-case.
+
+    Dùng trong build_match_agent(district=..., exclude_user_id=user_id) thay vì
+    tool module-level phía trên.
     """
 
     @tool("Tìm user đang bật radar gần một toạ độ")
     def find_nearby_users_bound(lat: float, lng: float, radius_km: float = 3.0) -> str:
         """Trả về JSON danh sách user đang online/bật finding-keo trong bán kính
         radius_km quanh (lat, lng), đã tự động lọc theo đúng quận/huyện của user
-        hiện tại. Dùng khi cần tìm người để ghép vào 1 kèo."""
+        hiện tại và tự động loại chính user đang tìm kiếm ra khỏi kết quả. Dùng
+        khi cần tìm người để ghép vào 1 kèo."""
         users = wp.safe_call(
             wp.get_nearby_users, lat, lng, radius_km, district, activity_type, default=[]
         )
+        if exclude_user_id is not None:
+            users = [u for u in users if str(u.get("user_id")) != str(exclude_user_id)]
         return json.dumps(users, ensure_ascii=False)
 
     return find_nearby_users_bound
