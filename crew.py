@@ -46,14 +46,17 @@ def run_match(
     district: str = "",
     activity_type: str = "",
 ) -> dict | list:
-    agent = build_match_agent()
+    # district/activity_type được khoá cứng vào tool "Tìm user đang bật radar..."
+    # ngay tại đây (closure trong make_find_nearby_users_tool), agent không còn
+    # tham số district để tự truyền/tự quên nữa -> khỏi cần nhắc trong Task nữa.
+    agent = build_match_agent(district=district, activity_type=activity_type)
     task = Task(
         description=(
             f"User_id={user_id} đang ở toạ độ lat={lat}, lng={lng}, quận/huyện='{district}'. "
-            f"BẮT BUỘC gọi tool 'Tìm user đang bật radar gần một toạ độ' với đúng "
-            f"district='{district}'" + (f", activity_type='{activity_type}'" if activity_type else "")
-            + f" (không truyền district thì tool luôn trả rỗng). Sau đó lọc trong bán kính "
-            f"{radius_km}km bằng lat/lng của từng ứng viên (đã có sẵn trong kết quả tool). "
+            f"Gọi tool 'Tìm user đang bật radar gần một toạ độ' với lat/lng ở trên và "
+            f"radius_km={radius_km} để lấy danh sách ứng viên xung quanh (tool đã tự lọc "
+            f"đúng quận/huyện '{district}' rồi, không cần truyền lại). Sau đó lọc trong bán "
+            f"kính {radius_km}km bằng lat/lng của từng ứng viên (đã có sẵn trong kết quả tool). "
             "Chấm điểm % phù hợp cho từng ứng viên dựa trên khoảng cách, khung giờ, "
             "loại hoạt động và lịch sử tham gia (gọi tool lấy lịch sử nếu cần)."
         ),

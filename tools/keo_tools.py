@@ -21,9 +21,43 @@ def find_nearby_users(lat: float, lng: float, radius_km: float = 3.0, district: 
     Thiếu district sẽ luôn trả về danh sách rỗng.
     `activity_type` (optional) lọc thêm theo loại hoạt động đang tìm (vd "nhậu bia",
     "cafe") nếu cần khớp đúng sở thích/loại kèo, để trống nếu muốn thấy mọi loại.
+
+    ⚠️ Giữ lại hàm này (module-level, đủ 5 tham số) để backward-compat cho nơi nào
+    còn import trực tiếp. Nhưng KHÔNG gắn hàm này cho match_agent nữa — dùng
+    `make_find_nearby_users_tool(district, activity_type)` bên dưới thay thế, vì
+    LLM (gpt-4o-mini) hay quên truyền `district` dù docstring có ghi "BẮT BUỘC"
+    (structured tool-calling bị giới hạn bởi args_schema, không phải tự do —
+    LLM chỉ tuân theo những gì nó THẤY trong schema, không phải những gì đọc
+    trong prompt). Xem crew.py run_match để biết chỗ gọi factory.
     """
     users = wp.safe_call(wp.get_nearby_users, lat, lng, radius_km, district, activity_type, default=[])
     return json.dumps(users, ensure_ascii=False)
+
+
+def make_find_nearby_users_tool(district: str, activity_type: str = ""):
+    """Factory tạo tool 'Tìm user đang bật radar gần một toạ độ' cho MỘT request cụ
+    thể, khoá cứng `district`/`activity_type` bằng closure ngay tại thời điểm build
+    agent (biết trước từ context của request, không cần LLM tự suy ra).
+
+    Khác với `find_nearby_users` ở trên: tool trả về từ factory này CHỈ có
+    `lat`, `lng`, `radius_km` trong args_schema — LLM không hề nhìn thấy (và do đó
+    không thể quên truyền) `district`/`activity_type`. Đây là fix triệt để cho bug
+    "district thiếu -> WordPress route finding-keo/nearby luôn trả rỗng".
+
+    Dùng trong build_match_agent(district=...) thay vì tool module-level phía trên.
+    """
+
+    @tool("Tìm user đang bật radar gần một toạ độ")
+    def find_nearby_users_bound(lat: float, lng: float, radius_km: float = 3.0) -> str:
+        """Trả về JSON danh sách user đang online/bật finding-keo trong bán kính
+        radius_km quanh (lat, lng), đã tự động lọc theo đúng quận/huyện của user
+        hiện tại. Dùng khi cần tìm người để ghép vào 1 kèo."""
+        users = wp.safe_call(
+            wp.get_nearby_users, lat, lng, radius_km, district, activity_type, default=[]
+        )
+        return json.dumps(users, ensure_ascii=False)
+
+    return find_nearby_users_bound
 
 
 @tool("Lấy danh sách kèo đang mở")
